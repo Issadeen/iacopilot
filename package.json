@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-bot",
+  "version": "1.0.0",
+  "description": "A simple WhatsApp bot to send emails based on user messages",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "prod": "pm2 start ecosystem.config.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.19.4",
+    "qrcode-terminal": "^0.12.0",
+    "@sendgrid/mail": "^7.4.0",
+    "pm2": "^5.3.0",
+    "express": "^4.17.1",
+    "puppeteer": "^19.7.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
