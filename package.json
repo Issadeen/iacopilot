@@ -5,7 +5,8 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "prod": "pm2 start ecosystem.config.js"
+    "prod": "pm2 start ecosystem.config.js",
+    "postinstall": "chmod +x startup.sh"
   },
   "dependencies": {
     "whatsapp-web.js": "^1.19.4",
