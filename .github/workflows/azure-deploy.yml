@@ -28,50 +28,17 @@ jobs:
     - name: Make startup script executable
       run: chmod +x startup.sh
 
-    - name: Create web.config
-      run: |
-        echo '<?xml version="1.0" encoding="utf-8"?>
-        <configuration>
-          <system.webServer>
-            <handlers>
-              <add name="iisnode" path="startup.sh" verb="*" modules="iisnode" />
-            </handlers>
-            <rewrite>
-              <rules>
-                <rule name="NodeInspector" patternSyntax="ECMAScript" stopProcessing="true">
-                  <match url="^startup.sh\/debug[\/]?" />
-                </rule>
-                <rule name="StaticContent">
-                  <action type="Rewrite" url="public{REQUEST_URI}" />
-                </rule>
-                <rule name="DynamicContent">
-                  <conditions>
-                    <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="True" />
-                  </conditions>
-                  <action type="Rewrite" url="startup.sh" />
-                </rule>
-              </rules>
-            </rewrite>
-            <security>
-              <requestFiltering>
-                <hiddenSegments>
-                  <remove segment="bin" />
-                </hiddenSegments>
-              </requestFiltering>
-            </security>
-          </system.webServer>
-        </configuration>' > web.config
-
-    - name: Install Puppeteer dependencies
+    - name: Install Chrome dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y chromium-browser
-        sudo apt-get install -y libgbm-dev
-        sudo apt-get install -y libasound2
+        sudo apt-get install -y wget curl gnupg
+        wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+        sudo apt-get install -y libnss3 libgconf-2-4 libatk1.0-0 libatk-bridge2.0-0 libgdk-pixbuf2.0-0 libgtk-3-0 libgbm-dev
 
     - name: Deploy to Azure
       uses: azure/webapps-deploy@v2
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        startup-command: ./startup.sh
+        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}

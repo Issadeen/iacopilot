@@ -4,17 +4,34 @@ const sgMail = require('@sendgrid/mail');
 const express = require('express');
 const path = require('path');
 
-// Environment variables configuration
-const sendGridApiKey = process.env.SENDGRID_API_KEY || 'your_sendgrid_api_key';
-const emailTo = process.env.EMAIL_TO || 'recipient@example.com';
-const emailFrom = process.env.EMAIL_FROM || 'sender@example.com';
+// Initialize Express app first
+const app = express();
 
-sgMail.setApiKey(sendGridApiKey);
+// Get port from environment variables
+const port = process.env.WEBSITES_PORT || process.env.PORT || 8080;
 
+// Debug middleware
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+});
+
+// Enable CORS
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
+
+// WhatsApp client state
 let isClientReady = false;
+let lastQR = '';
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const RECONNECT_INTERVAL = 5000;
 
 // Azure-specific puppeteer configuration
 const puppeteerConfig = {
@@ -28,33 +45,9 @@ const puppeteerConfig = {
         '--no-zygote',
         '--disable-gpu',
         '--single-process',
-        '--disable-extensions',
-        '--disable-software-rasterizer',
-        '--ignore-certificate-errors',
-        '--ignore-ssl-errors'
-    ],
-    executablePath: process.platform === 'win32' 
-        ? 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe' 
-        : '/usr/bin/google-chrome',
-    userDataDir: process.env.AZURE_STORAGE_PATH 
-        ? path.join(process.env.AZURE_STORAGE_PATH, 'chrome-data')
-        : path.join(__dirname, 'chrome-data')
+        '--disable-extensions'
+    ]
 };
-
-// Initialize Express app
-const app = express();
-const port = process.env.PORT || 3000;
-
-// Enable CORS
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    next();
-});
-
-// Serve static files
-app.use(express.static('public'));
-app.use(express.json());
 
 // Initialize WhatsApp client
 const client = new Client({
@@ -64,84 +57,64 @@ const client = new Client({
     puppeteer: puppeteerConfig
 });
 
-// Keep track of QR code for Azure portal
-let lastQR = '';
-
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({
-        status: 'Bot is running',
+        status: 'WhatsApp bot is running',
+        serverTime: new Date().toISOString(),
+        ready: isClientReady,
         endpoints: {
-            qr: '/qr',
-            health: '/health'
+            health: '/health',
+            qr: '/qr'
         }
     });
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-    try {
-        res.status(200).json({
-            status: 'ok',
-            ready: isClientReady,
-            qr: isClientReady ? null : lastQR
-        });
-    } catch (error) {
-        console.error('Health check error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+    console.log('Health check requested');
+    res.json({
+        status: 'ok',
+        ready: isClientReady,
+        timestamp: new Date().toISOString(),
+        port: port,
+        uptime: process.uptime()
+    });
 });
 
-// QR code endpoint with error handling
+// QR code endpoint
 app.get('/qr', (req, res) => {
-    console.log('QR endpoint accessed. QR Status:', { hasQR: !!lastQR, isReady: isClientReady });
-    try {
-        if (lastQR && !isClientReady) {
-            res.status(200).json({ 
-                status: 'success',
-                qr: lastQR,
-                message: 'Scan this QR code with WhatsApp'
-            });
-        } else if (isClientReady) {
-            res.status(200).json({ 
-                status: 'authenticated',
-                message: 'WhatsApp is already authenticated'
-            });
-        } else {
-            res.status(202).json({ 
-                status: 'waiting',
-                message: 'QR code not yet generated. Please try again in a few seconds.'
-            });
-        }
-    } catch (error) {
-        console.error('QR endpoint error:', error);
-        res.status(500).json({ 
-            status: 'error',
-            message: 'Internal server error while fetching QR code'
-        });
+    console.log('QR code requested. Status:', { hasQR: !!lastQR, isReady: isClientReady });
+    if (lastQR && !isClientReady) {
+        res.json({ qr: lastQR });
+    } else if (isClientReady) {
+        res.json({ status: 'authenticated' });
+    } else {
+        res.status(404).json({ message: 'QR code not available' });
     }
 });
 
-// WhatsApp client event handlers
+// WhatsApp event handlers
 client.on('qr', (qr) => {
-    console.log('New QR code generated. Access it at /qr endpoint');
+    console.log('New QR code generated');
     lastQR = qr;
     qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-    console.log('WhatsApp bot is ready!');
+    console.log('WhatsApp client is ready!');
     isClientReady = true;
     reconnectAttempts = 0;
 });
 
-client.on('auth_failure', async (msg) => {
-    console.error('Authentication failed:', msg);
+client.on('auth_failure', async () => {
+    console.log('Auth failure, attempting to reconnect');
+    isClientReady = false;
     await handleReconnect();
 });
 
-client.on('disconnected', async (reason) => {
-    console.log('Client disconnected:', reason);
+client.on('disconnected', async () => {
+    console.log('Client disconnected');
     isClientReady = false;
     await handleReconnect();
 });
@@ -157,8 +130,8 @@ client.on('message', async (message) => {
         else if (message.body.toLowerCase().startsWith('email')) {
             const emailContent = message.body.substring(6).trim();
             const email = {
-                to: emailTo,
-                from: emailFrom,
+                to: process.env.EMAIL_TO || 'recipient@example.com',
+                from: process.env.EMAIL_FROM || 'sender@example.com',
                 subject: 'Message from WhatsApp Bot',
                 text: emailContent,
             };
@@ -176,61 +149,32 @@ client.on('message', async (message) => {
     }
 });
 
-// Error handler
+// Reconnection handler
 async function handleReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('Max reconnection attempts reached. Please restart the bot manually.');
-        process.exit(1);
+        console.error('Max reconnection attempts reached');
+        return;
     }
 
     reconnectAttempts++;
-    console.log(`Attempting to reconnect... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+    console.log(`Attempting to reconnect... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
 
     try {
-        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
-        if (!isClientReady) {
-            await client.initialize();
-        }
+        await client.initialize();
     } catch (error) {
-        console.error('Reconnection attempt failed:', error);
-        await handleReconnect();
+        console.error('Reconnection failed:', error);
+        setTimeout(handleReconnect, 5000);
     }
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-    console.log('Received SIGTERM. Closing WhatsApp client...');
-    try {
-        await client.destroy();
-        process.exit(0);
-    } catch (error) {
-        console.error('Error while closing client:', error);
-        process.exit(1);
-    }
-});
-
-process.on('SIGINT', async () => {
-    console.log('Received SIGINT. Closing WhatsApp client...');
-    try {
-        await client.destroy();
-        process.exit(0);
-    } catch (error) {
-        console.error('Error while closing client:', error);
-        process.exit(1);
-    }
-});
-
-// Start the server and initialize WhatsApp client
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Server listening on port ${port}`);
-    try {
-        console.log('Initializing WhatsApp client...');
-        client.initialize().catch(error => {
-            console.error('Failed to initialize client:', error);
-            handleReconnect();
-        });
-    } catch (error) {
-        console.error('Failed to start initialization:', error);
+// Start server and initialize WhatsApp client
+const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`Server is running on port ${port}`);
+    console.log('Starting WhatsApp client initialization...');
+    
+    // Initialize WhatsApp client
+    client.initialize().catch(error => {
+        console.error('Failed to initialize WhatsApp client:', error);
         handleReconnect();
-    }
+    });
 });
