@@ -1,4 +1,10 @@
 {
-  "path": "/health",
-  "timeout": 5
+    "healthCheck": {
+        "healthyHttpCodes": "200-299",
+        "path": "/health",
+        "protocol": "http",
+        "host": "localhost",
+        "interval": "10",
+        "timeout": "5"
+    }
 }

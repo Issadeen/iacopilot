@@ -9,36 +9,43 @@ on:
 env:
   AZURE_WEBAPP_NAME: whatsapp-bot-app
   AZURE_WEBAPP_PACKAGE_PATH: '.'
-  NODE_VERSION: '18.x'
+  NODE_VERSION: '20.x'
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Set up Node.js
-      uses: actions/setup-node@v2
+      uses: actions/setup-node@v3
       with:
         node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
 
     - name: Install dependencies
-      run: npm install
-
-    - name: Make startup script executable
-      run: chmod +x startup.sh
-
-    - name: Install Chrome dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y wget curl gnupg
-        wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-        sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
-        sudo apt-get install -y libnss3 libgconf-2-4 libatk1.0-0 libatk-bridge2.0-0 libgdk-pixbuf2.0-0 libgtk-3-0 libgbm-dev
+        npm ci
+        npm audit fix --force
+
+    - name: Verify app startup
+      run: |
+        npm start & sleep 10
+        curl -f http://localhost:8080/health || exit 1
+        pkill -f "node bot.js"
+
+    - name: Create deployment package
+      run: |
+        zip -r deploy.zip . -x "node_modules/*" "*.git*" "*.env*"
 
     - name: Deploy to Azure
       uses: azure/webapps-deploy@v2
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+        package: deploy.zip
+
+    - name: Post-deployment health check
+      run: |
+        sleep 30
+        curl -f https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health || exit 1
